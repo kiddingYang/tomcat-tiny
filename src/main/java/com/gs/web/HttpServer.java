@@ -11,10 +11,6 @@ import java.net.Socket;
 public class HttpServer {
 
 
-    public static final String WEB_ROOT = System.getProperty("user.dir") + File.separator + "webroot";
-
-    public static final String SHUTDOWN_COMMAND = "/STUTDOWN";
-
     public boolean shutdown = false;
 
     public static void main(String[] args) {
@@ -46,11 +42,18 @@ public class HttpServer {
                 Response response = new Response(output);
                 response.setRequest(request);
 
+                if (request.getUri().startsWith("/servlet/")) {
+                    ServletProcessor processor = new ServletProcessor();
+                    processor.process(request, response);
+                } else {
+                    StaticResourceProcessor processor = new StaticResourceProcessor();
+                    processor.process(request, response);
+                }
                 response.sendStaticResource();
 
                 socket.close();
 
-                shutdown = request.getUri().equals(SHUTDOWN_COMMAND);
+                shutdown = request.getUri().equals(Constants.SHUTDOWN_COMMAND);
             } catch (Exception e) {
                 e.printStackTrace();
                 continue;
