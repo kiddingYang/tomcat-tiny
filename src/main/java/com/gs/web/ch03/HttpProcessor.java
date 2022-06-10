@@ -1,15 +1,20 @@
 package com.gs.web.ch03;
 
-import com.gs.web.ch02.Request;
-import com.gs.web.ch02.Response;
-import com.gs.web.ch02.ServletProcessor2;
 
+import javax.servlet.ServletException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 
 public class HttpProcessor {
+
+    private HttpRequest request;
+
+    private HttpResponse response;
+
+    private RequestLine requestLine = new RequestLine();
+
+    private StringManager sm = StringManager.getManager("com.gs.web.ch03");
 
     public HttpProcessor(HttpConnector httpConnector) {
 
@@ -17,27 +22,122 @@ public class HttpProcessor {
     }
 
     public void process(Socket socket) {
-        InputStream input = null;
+        SocketInputStream input = null;
         OutputStream output = null;
 
         try {
-            input = socket.getInputStream();
+            input = new SocketInputStream(socket.getInputStream(), 2048);
             output = socket.getOutputStream();
 
-            Request request = new Request(input);
-            request.parse();
-            Response response = new Response(output);
+            request = new HttpRequest(input);
+            response = new HttpResponse(output);
+            response.setRequest(request);
+            response.setHeader("Server", "Tomcat-X Container");
+
+            parseRequest(input, output);
+            parseHeader(input);
+
 
             if (request.getUri().startsWith("/servlet/")) {
-                ServletProcessor2 processor2 = new ServletProcessor2();
-                processor2.process(request, response);
+                ServletProcessor servletProcessor = new ServletProcessor();
+                servletProcessor.process(request, response);
             } else {
-                response.setRequest(request);
-                response.sendStaticResource();
+                StaticResourceProcessor processor = new StaticResourceProcessor();
+                processor.process(request, response);
             }
             socket.close();
-        } catch (IOException e) {
+        } catch (IOException | ServletException e) {
             e.printStackTrace();
         }
+    }
+
+    private void parseHeader(SocketInputStream input) throws ServletException {
+        HttpHeader httpHeader = new HttpHeader();
+        input.readHeader(httpHeader);
+
+        if (httpHeader.nameEnd == 0) {
+            if (httpHeader.valueEnd == 0) {
+                return;
+            } else {
+                throw new ServletException(sm.getString("httpProcessor.parseHeader.colon"));
+            }
+        }
+    }
+
+    private void parseRequest(SocketInputStream input, OutputStream output) throws ServletException {
+
+        input.readRequestLine(requestLine);
+        String method = new String(requestLine.method, 0, requestLine.methodEnd);
+
+        String uri = null;
+        String protocol = new String(requestLine.protocol, 0, requestLine.protocolEnd);
+
+        if (method.length() < 1) {
+            throw new ServletException("Missing HTTP Request method");
+        } else if (requestLine.uriEnd < 1) {
+            throw new ServletException("Missing HTTP Request URI");
+        }
+
+        int question = requestLine.indexOf("?");
+        if (question >= 0) {
+            request.setQueryString(new String(requestLine.uri, question + 1, requestLine.uriEnd - question - 1));
+            uri = new String(requestLine.uri, 0, question);
+        } else {
+            request.setQueryString(null);
+            uri = new String(requestLine.uri, 0, requestLine.uriEnd);
+        }
+
+        // check uri eg: http://www.test.com
+        if (!uri.startsWith("/")) {
+            int pos = uri.indexOf("://");
+            // parsing protocol and host name
+            if (pos != -1) {
+                pos = uri.indexOf("/", pos + 3);
+                if (pos == -1) {
+                    uri = "";
+                } else {
+                    uri = uri.substring(pos);
+                }
+            }
+        }
+
+        // parse session ID
+        String match = ";jsessionid=";
+        int semicolon = uri.indexOf(match);
+        if (semicolon >= 0) {
+            String rest = uri.substring(semicolon + match.length());
+            int semicolon2 = rest.indexOf(";");
+            if (semicolon2 >= 0) {
+                request.setRequestSessionId(rest.substring(0, semicolon2));
+                rest = rest.substring(semicolon2);
+            } else {
+                request.setRequestSessionId(rest);
+                rest = "";
+            }
+            request.setRequestedSessionURL(true);
+            uri = uri.substring(0, semicolon) + rest;
+        } else {
+            request.setRequestSessionId(null);
+            request.setRequestedSessionURL(false);
+        }
+
+
+        String normalizeUri = normalize(uri);
+        request.setMethod(method);
+        request.setProtocol(protocol);
+        if (normalizeUri != null) {
+            request.setRequestURI(normalizeUri);
+        } else {
+            request.setRequestURI(uri);
+        }
+
+        if (normalizeUri == null) {
+            throw new ServletException("Invalid URI: " + uri + "'");
+        }
+
+    }
+
+    private String normalize(String uri) {
+        return null;
     }
 }
